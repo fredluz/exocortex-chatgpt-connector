@@ -1,115 +1,125 @@
 # Exocortex ChatGPT Connector
 
-MACX Exocortex integration for ChatGPT Pro. Built on [`chatgpt-mcp`](https://github.com/fredluz/chatgpt-mcp) with deeper multi-agent support. Designed to work alongside [`exocortex-subagent-management-mcp`](https://github.com/fredluz/exocortex-subagent-management-mcp) — the subagent orchestration layer that spawns, monitors, and communicates with AI agents.
+Native macOS ChatGPT connector for MACX Exocortex workflows.
 
-## Part of the Exocortex Stack
+This version controls the ChatGPT macOS desktop app through Accessibility UI scripting. The old Chrome/Patchright backend is deprecated and has been removed from the executable path.
 
-```
-┌─────────────────────────────────────────────┐
-│  Your MCP Client (Claude Code, etc.)        │
-├──────────────────────┬──────────────────────┤
-│  exocortex-subagent- │  exocortex-chatgpt-  │
-│  management-mcp      │  connector           │
-│  ─────────────────── │  ──────────────────── │
-│  Spawn AI agents     │  GPT-5 Pro reasoning │
-│  Read/send messages  │  Image generation    │
-│  Sleep/wake signals  │  Async submit/fetch  │
-│  Agent registry      │  Per-agent routing   │
-└──────────────────────┴──────────────────────┘
-         │                       │
-         ▼                       ▼
-    tmux sessions          Chrome/ChatGPT
-    (AI agents)            (GPT-5 Pro)
+## Interface
+
+The primary interface is the CLI:
+
+```bash
+exocortex-chatgpt status
+exocortex-chatgpt daemon
+exocortex-chatgpt submit --agent manfred "Analyze this..."
+exocortex-chatgpt fetch <request_id>
+exocortex-chatgpt query "Blocking one-shot prompt"
+exocortex-chatgpt image "Generate an icon"
 ```
 
-Both MCPs share `EXOCORTEX_HOME` (`~/.exocortex/`) and the agent identity system (`MACX_AGENT`). When a subagent spawned by the management MCP calls `submit_pro`, the connector automatically routes the response to that agent's output directory and wakes it when done.
+The MCP server still exists as an adapter for clients that want it:
 
-## What This Adds Over chatgpt-mcp
+```bash
+exocortex-chatgpt server
+```
 
-| Feature | chatgpt-mcp | exocortex-chatgpt-connector |
-|---------|-------------|----------------------------|
-| State directory | `~/.chatgpt-mcp/` | `~/.exocortex/chatgpt/` |
-| Config env var | `CHATGPT_MCP_HOME` | `EXOCORTEX_HOME` |
-| Agent detection | Manual `agent` param | Auto from `MACX_AGENT` env var |
-| Wake signals | `send-to-agent.sh` notify | Same, integrated by default |
-| Output routing | `agents/<name>/pro/` | Same, auto-routed via `MACX_AGENT` |
+## Safety Model
 
-If you're not running a multi-agent system, use [`chatgpt-mcp`](https://github.com/fredluz/chatgpt-mcp) instead — it's the same core with generic defaults.
+The daemon uses one serial UI queue. ChatGPT can generate in multiple background conversations, but only one operation can touch the visible app at a time.
+
+Detailed restart/handoff notes live in:
+
+```text
+research/native-mcp-handoff.md
+```
+
+Read that file before running native end-to-end tests or starting the daemon from a new tmux session.
+
+Native UI operations now follow two rules:
+
+- If Accessibility permission is missing, the daemon refuses to activate or control ChatGPT.
+- When a UI operation does activate ChatGPT, it restores the previously frontmost app in a `finally` path.
+
+This means `submit` can safely queue a request even before Accessibility is granted, but the daemon will not run that request until permission is available.
 
 ## Setup
 
-```bash
-npm install -g exocortex-chatgpt-connector
-exocortex-chatgpt launch --visible   # login once
-exocortex-chatgpt launch             # headless daemon
-```
+Requirements:
 
-Register in your MCP config:
-
-```json
-{
-  "mcpServers": {
-    "chatgpt": {
-      "type": "stdio",
-      "command": "exocortex-chatgpt",
-      "args": ["server"]
-    }
-  }
-}
-```
-
-## MACX_AGENT Auto-Detection
-
-When `MACX_AGENT` is set (standard in agents spawned by `exocortex-subagent-management-mcp`), all tools automatically route output to that agent's directory:
-
-```
-~/.exocortex/chatgpt/agents/phillip/pro/     # Phillip's reasoning responses
-~/.exocortex/chatgpt/agents/phillip/images/   # Phillip's generated images
-~/.exocortex/chatgpt/agents/homer/pro/        # Homer's reasoning responses
-```
-
-No need to pass `agent` manually — the connector reads it from the environment.
-
-## EXOCORTEX_HOME
-
-All state lives under `$EXOCORTEX_HOME/chatgpt/` (defaults to `~/.exocortex/chatgpt/`). This keeps ChatGPT state alongside other exocortex services:
-
-```
-~/.exocortex/
-├── chatgpt/          # This connector
-│   ├── profile/      # Chrome session data
-│   ├── requests/     # Pending async requests
-│   ├── agents/       # Per-agent output dirs
-│   └── daemon.pid
-├── data/             # Subagent management MCP
-│   └── session-store.json
-└── ...
-```
-
-## MCP Tools (5)
-
-Same tools as `chatgpt-mcp` — the interface is identical:
-
-1. **`submit_pro`** — Async GPT-5 Pro with Extended Thinking. Returns `{ request_id, response_path }`.
-2. **`submit_image`** — Async image generation. Returns `{ request_id, image_dir }`.
-3. **`query`** — Sync one-shot (blocking). For interactive use.
-4. **`status`** — Session or request status.
-5. **`fetch`** — Retrieve async request results.
-
-## Wake Signals
-
-When an async request completes, the daemon calls `~/.clawd/bin/send-to-agent.sh` to notify the requesting agent. This integrates with the sleep/wake system from `exocortex-subagent-management-mcp` — sleeping agents get woken up when their ChatGPT results are ready, without polling.
-
-## Prerequisites
-
-- ChatGPT Pro subscription
-- Chrome installed
+- macOS
+- ChatGPT desktop app installed and signed in
 - Node.js 20+
-- [`exocortex-subagent-management-mcp`](https://github.com/fredluz/exocortex-subagent-management-mcp) (recommended)
+- Accessibility permission granted to the terminal/process running the daemon
 
-## Relationship to chatgpt-mcp
+Grant Accessibility permission in:
 
-This is the exocortex-branded distribution of [`chatgpt-mcp`](https://github.com/fredluz/chatgpt-mcp). The generic version works standalone with any MCP client. This version adds MACX-specific defaults and conventions for multi-agent orchestration.
+System Settings -> Privacy & Security -> Accessibility
+
+Then verify:
+
+```bash
+exocortex-chatgpt check
+```
+
+Expected checks:
+
+- `native.ax_trusted`
+- `native.chatgpt_process`
+- `native.notifications_db`
+
+## Async Flow
+
+```bash
+request_id=$(exocortex-chatgpt submit --agent "$MACX_AGENT" "Prompt text")
+exocortex-chatgpt status "$request_id"
+exocortex-chatgpt fetch "$request_id"
+```
+
+`submit` writes a request file under:
+
+```text
+~/.exocortex/chatgpt/requests/
+```
+
+Completed responses are written under:
+
+```text
+~/.exocortex/chatgpt/agents/<agent>/pro/
+```
+
+Image outputs are written under:
+
+```text
+~/.exocortex/chatgpt/agents/<agent>/images/
+```
+
+## Notifications
+
+The native daemon watches ChatGPT's registered macOS notification records as a completion hint. Request IDs are embedded in prompts so notification text or payloads can be matched when ChatGPT surfaces them.
+
+Notifications are not the source of truth. They only move a request to the front of the probe queue. Final completion still requires a serial UI probe and response extraction.
+
+## MCP Tools
+
+The MCP adapter exposes:
+
+- `submit_pro`
+- `submit_image`
+- `query`
+- `status`
+- `fetch`
+
+For agents, prefer `submit_pro` / `submit_image` plus direct file reads from the returned paths.
+
+## State
+
+All connector state lives under `$EXOCORTEX_HOME/chatgpt/`, defaulting to:
+
+```text
+~/.exocortex/chatgpt/
+```
+
+This repo uses `MACX_AGENT` for per-agent output routing.
 
 ## License
 

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import {
   status as sessionStatus,
-} from './browser-controller.mjs';
+} from './native-controller.mjs';
 import {
   ensureDaemonRunning,
   fetch as fetchRequest,

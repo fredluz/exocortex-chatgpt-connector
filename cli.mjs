@@ -14,7 +14,7 @@ const [cmd, ...rest] = process.argv.slice(2);
 
 function usage(code = 2) {
   console.error(
-    'usage: exocortex-chatgpt <launch|daemon|server|http|status|submit|fetch|query|image|last|new|model|thinking|stop|check|tabs> [args]',
+    'usage: exocortex-chatgpt <launch|daemon|server|http|status|submit|fetch|query|image|last|new|model|thinking|stop|check> [args]',
   );
   process.exit(code);
 }
@@ -27,14 +27,10 @@ function normalizeMode(flags) {
 }
 
 async function runController(fn) {
-  const previousAttachOnly = process.env.EXOCORTEX_CHATGPT_ATTACH_ONLY;
-  process.env.EXOCORTEX_CHATGPT_ATTACH_ONLY = '1';
-  const c = await import('./browser-controller.mjs');
+  const c = await import('./native-controller.mjs');
   try {
     return await fn(c);
   } finally {
-    if (previousAttachOnly == null) delete process.env.EXOCORTEX_CHATGPT_ATTACH_ONLY;
-    else process.env.EXOCORTEX_CHATGPT_ATTACH_ONLY = previousAttachOnly;
     await c.shutdown();
   }
 }
@@ -42,8 +38,7 @@ async function runController(fn) {
 try {
   switch (cmd) {
     case 'launch':
-      if (parseFlags(rest).visible) process.env.CHATGPT_VISIBLE = '1';
-      await import('./launcher.mjs');
+      await runController(c => c.launch());
       break;
 
     case 'daemon':
@@ -79,7 +74,10 @@ try {
       const prompt = flags._.join(' ').trim();
       if (!prompt) usage();
 
-      await ensureDaemonRunning();
+      const daemon = await ensureDaemonRunning();
+      if (daemon.disabled) {
+        console.error(`warning: native daemon not started: ${daemon.error || 'disabled'}`);
+      }
       const { request_id } = await submitRequest(prompt, {
         agent: flags.agent,
         model: flags.model,
@@ -186,17 +184,8 @@ try {
           `${ok ? 'OK ' : 'MISS'}  ${r.path.padEnd(40)} count=${r.count}  ${r.selector}\n`,
         );
       }
-      process.stdout.write(`\n${report.length - bad}/${report.length} selectors present\n`);
+      process.stdout.write(`\n${report.length - bad}/${report.length} native checks passed\n`);
       process.exit(bad ? 1 : 0);
-    }
-
-    case 'tabs': {
-      const sub = rest[0];
-      if (sub !== 'cleanup') usage();
-
-      const result = await runController(c => c.cleanupEphemeralTabs({ includeErrors: true, includeUnmarked: false }));
-      process.stdout.write(`closed=${result.closed}\n`);
-      break;
     }
 
     default:

@@ -1,14 +1,13 @@
 {
   "name": "exocortex-chatgpt-connector",
   "version": "0.1.1",
-  "description": "MACX Exocortex ChatGPT connector — GPT-5 Pro reasoning and image generation for multi-agent workflows. Built on chatgpt-mcp with EXOCORTEX_HOME, MACX_AGENT auto-detection, and agent wake signals.",
+  "description": "MACX Exocortex ChatGPT connector — native ChatGPT macOS automation for async text and image workflows.",
   "type": "module",
   "bin": {
     "exocortex-chatgpt": "./cli.mjs"
   },
   "files": [
     "*.mjs",
-    "selectors.json",
     "README.md"
   ],
   "repository": {
@@ -28,7 +27,8 @@
     "exocortex",
     "macx",
     "multi-agent",
-    "patchright",
+    "macos",
+    "accessibility",
     "automation",
     "claude-code"
   ],
@@ -42,7 +42,6 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
-    "patchright": "^1.59.4"
+    "@modelcontextprotocol/sdk": "^1.29.0"
   }
 }

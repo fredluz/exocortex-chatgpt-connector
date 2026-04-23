@@ -240,6 +240,28 @@ export async function readRequest(requestId) {
   return readJsonIfExists(requestPath(requestId));
 }
 
+export async function writeRequest(requestId, request) {
+  await atomicWriteJson(requestPath(requestId), {
+    ...request,
+    request_id: requestId,
+    updated_at: nowIso(),
+  });
+}
+
+export async function updateRequest(requestId, updater) {
+  const current = await readRequest(requestId);
+  if (!current) return null;
+  const nextPatch = typeof updater === 'function' ? await updater(current) : updater;
+  const next = {
+    ...current,
+    ...(nextPatch || {}),
+    request_id: requestId,
+    updated_at: nowIso(),
+  };
+  await atomicWriteJson(requestPath(requestId), next);
+  return next;
+}
+
 async function firstExistingResponse(requestId, request = null) {
   const candidates = [];
   const seen = new Set();
@@ -550,6 +572,26 @@ export async function ensureDaemonRunning() {
     return { started: false, pid: existingPid, disabled: false };
   }
 
+  try {
+    const native = await import('./native-controller.mjs');
+    const s = await native.status();
+    if (!s.ax_trusted) {
+      return {
+        started: false,
+        pid: null,
+        disabled: true,
+        error: 'native_accessibility_permission_missing',
+      };
+    }
+  } catch (error) {
+    return {
+      started: false,
+      pid: null,
+      disabled: true,
+      error: String(error?.message || error),
+    };
+  }
+
   const child = spawn(process.execPath, [CLI_PATH, 'daemon'], {
     detached: true,
     stdio: 'ignore',
@@ -570,7 +612,10 @@ export async function ensureDaemonRunning() {
 }
 
 export async function query(prompt, opts = {}) {
-  await ensureDaemonRunning();
+  const daemon = await ensureDaemonRunning();
+  if (daemon.disabled) {
+    throw new Error(daemon.error || 'daemon_start_disabled');
+  }
   const { request_id } = await submit(prompt, opts);
 
   while (true) {

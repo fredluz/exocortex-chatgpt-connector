@@ -1,0 +1,9 @@
+=== WINDOW DIAGNOSTICS: com.openai.chat ===
+[screens] NSScreen count: 1
+  screen[0]: 1470x956 at (0,0) name=Built-in Retina Display
+[app] pid=96787
+[kAXWindowsAttribute] AXError=-25211
+[windows] no windows attribute (NULL or error)
+=== AX DUMP: com.openai.chat ===
+[?] desc=- title=- val=-
+=== END DUMP ===

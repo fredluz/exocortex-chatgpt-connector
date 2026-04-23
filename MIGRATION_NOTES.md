@@ -1,25 +1,33 @@
-# Migration Notes: Camoufox Backend
+# Migration Notes
 
-## Browser Owner Model
+The connector has moved from Chrome/Patchright automation to native ChatGPT macOS automation.
 
-- The runtime now uses a **single-owner browser model**.
-- `launch` owns the long-lived Camoufox context.
-- CLI one-shot controller operations run in **attach-only mode** and shut down their local handles after each command instead of owning browser lifetime.
+## Removed
 
-## Profile Migration
+- Browser controller
+- Browser launcher
+- DOM selectors
+- Patchright dependency
+- CDP/profile ownership model
 
-- Browser backend switched from Chromium-family automation to Firefox/Camoufox profile storage.
-- Users must log in again once using the new persistent profile.
-- Profile path remains `~/.chatgpt-mcp/profile` (or `CHATGPT_MCP_HOME/profile`).
+## Added
 
-## Known Differences vs Chromium Backend
+- `native-controller.mjs`
+- Serial native UI operations through macOS Accessibility/System Events
+- ChatGPT notification database scanner for completion hints
+- Request-id sentinels embedded into prompts
+- Focus restoration after every native UI operation
+- Hard refusal to activate/control ChatGPT when Accessibility permission is missing
 
-- No Chromium CDP-style cross-process attach contract.
-- Browser reuse is enforced through the single-owner launcher pattern.
-- Launch behavior and rendering characteristics follow Firefox/Camoufox semantics.
-- Memory footprint is typically lower under comparable workloads.
+## Operational Change
 
-## Image Download Fallback
+`submit` still creates a mailbox request and returns a request id. If Accessibility permission is missing, the daemon is not auto-started; the request remains queued until a permitted daemon is started.
 
-- Image download keeps authenticated network fetching for normal URLs.
-- Blob/canvas-backed image responses use an in-page canvas/blob extraction fallback to preserve output reliability.
+Use:
+
+```bash
+exocortex-chatgpt check
+exocortex-chatgpt daemon
+```
+
+The daemon must be run from a process that has Accessibility permission.

@@ -29,7 +29,7 @@ For agents, the async flow is the default and recommended path.
 ```json
 {
   "request_id": "<id>",
-  "response_path": "~/.chatgpt-mcp/responses/<id>.json"
+  "response_path": "~/.exocortex/chatgpt/agents/<agent>/pro/<id>.json"
 }
 ```
 
@@ -38,7 +38,7 @@ For agents, the async flow is the default and recommended path.
 ```json
 {
   "request_id": "<id>",
-  "image_dir": "~/.chatgpt-mcp/images/<timestamp>-<slug>"
+  "image_dir": "~/.exocortex/chatgpt/agents/<agent>/images/<timestamp>-<slug>"
 }
 ```
 
@@ -82,7 +82,7 @@ image_dir = result.image_dir
 sleep(wake_on_signal=true)
 # daemon sends: "... ready: <id> at <response_path> ..." or "... in <image_dir> ..."
 
-response_path = "~/.chatgpt-mcp/responses/<request_id>.json"
+response_path = "~/.exocortex/chatgpt/agents/<agent>/pro/<request_id>.json"
 payload = read_json(response_path)
 if payload.state == "error":
   raise payload.error

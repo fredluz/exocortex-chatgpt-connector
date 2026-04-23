@@ -15,14 +15,6 @@ export function getAgentName() {
   return String(process.env.MACX_AGENT || '').trim() || null;
 }
 
-export function getProfileDir() {
-  return join(getHome(), 'profile');
-}
-
-export function getCDPFilePath() {
-  return join(getHome(), 'cdp');
-}
-
 export function getImagesDir() {
   return join(getHome(), 'images');
 }

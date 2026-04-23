@@ -11,7 +11,7 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync, chmodSync } from 'n
 import {
   readLast, status, newChat, setModel, getModel,
   setThinking, getThinking, stop,
-} from './browser-controller.mjs';
+} from './native-controller.mjs';
 import { query as queuedQuery } from './mailbox.mjs';
 import { getHome, getTokenPath } from './runtime-paths.mjs';
 
