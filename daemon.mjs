@@ -1,7 +1,5 @@
 #!/usr/bin/env node
 
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import {
   claimRequestLock,
   listRequestIds,
@@ -13,29 +11,28 @@ import {
   verifyResponseFiles,
   writeDaemonPid,
   writeResponseVerified,
-  updateRequest,
+  markRequestActive,
   notifyAgentIfAvailable,
 } from './mailbox.mjs';
 import {
-  currentNotificationRecordId,
-  probeRequest,
-  scanNotifications,
+  cleanupEphemeralTabs,
+  createEphemeralChatPage,
+  closeEphemeralPage,
+  markEphemeralTabError,
+  queryInPage,
   shutdown,
-  status as nativeStatus,
-  submitRequest,
-} from './native-controller.mjs';
-import {
-  probeNativeRequest,
-  submitNativeRequest,
-} from './daemon-core.mjs';
+} from './browser-controller.mjs';
+import { processClaimedRequest } from './daemon-core.mjs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 const POLL_MS = Number(process.env.CHATGPT_MCP_DAEMON_POLL_MS || 250);
-const MAX_ACTIVE_GENERATIONS = Number(process.env.CHATGPT_NATIVE_MAX_ACTIVE || 3);
 const ROUTE_RESPONSE_SCRIPT = join(homedir(), '.clawd', 'bin', 'route-response.sh');
 
 let stopping = false;
+const inFlightByRequest = new Map();
+const inFlightByAgent = new Map();
 let pidClaimed = false;
-let lastNotificationRecordId = 0;
 
 function requestStop() {
   stopping = true;
@@ -44,31 +41,13 @@ function requestStop() {
 process.on('SIGINT', requestStop);
 process.on('SIGTERM', requestStop);
 
-function parseTime(value) {
-  const t = Date.parse(value || '');
-  return Number.isFinite(t) ? t : 0;
-}
-
-function isPending(request) {
-  const state = request?.state ?? 'pending';
-  return state === 'pending';
-}
-
-function isActive(request) {
-  const state = request?.state ?? 'pending';
-  return state === 'generating' || state === 'probing' || state === 'completion_hint';
-}
-
-function isDue(request) {
-  if (request?.notification_hint_at) return true;
-  const due = parseTime(request?.next_probe_at);
-  return !due || due <= Date.now();
-}
-
-async function readAllRequests() {
+async function maybeStartRequests() {
   const requestIds = await listRequestIds();
-  const rows = [];
+  let started = 0;
+
   for (const requestId of requestIds) {
+    if (inFlightByRequest.has(requestId)) continue;
+
     const request = await readRequest(requestId);
     if (!request) continue;
 
@@ -78,137 +57,54 @@ async function readAllRequests() {
       continue;
     }
 
-    rows.push({ requestId, request });
-  }
-  return rows;
-}
+    const agent = normalizeAgent(request.agent);
+    if (inFlightByAgent.has(agent)) continue;
 
-async function applyNotificationHints(activeRows) {
-  if (!activeRows.length) return 0;
-
-  const { lastRecordId, hints } = await scanNotifications(
-    activeRows.map(row => row.request),
-    lastNotificationRecordId,
-  );
-  lastNotificationRecordId = Math.max(lastNotificationRecordId, lastRecordId);
-
-  let applied = 0;
-  for (const hint of hints) {
-    const lockPath = await claimRequestLock(hint.request_id);
+    const lockPath = await claimRequestLock(requestId);
     if (!lockPath) continue;
-    try {
-      const request = await readRequest(hint.request_id);
-      if (!request || !isActive(request)) continue;
-      await updateRequest(hint.request_id, {
-        state: 'completion_hint',
-        notification_hint_at: new Date().toISOString(),
-        notification_record_id: hint.record_id,
-        notification_target_url: hint.target_url ?? request.notification_target_url ?? null,
-        next_probe_at: new Date().toISOString(),
+
+    const task = processClaimedRequest({
+      requestId,
+      lockPath,
+      agent,
+      deps: {
+        readRequest,
+        markRequestActive,
+        createEphemeralChatPage,
+        queryInPage,
+        verifyResponseFiles,
+        writeResponseVerified,
+        removeRequest,
+        closeEphemeralPage,
+        markEphemeralTabError,
+        notifyAgentIfAvailable: (notifyAgent, notifyRequestId, notifyPreview, notifyOptions = {}) => {
+          return notifyAgentIfAvailable(notifyAgent, notifyRequestId, notifyPreview, {
+            ...notifyOptions,
+            scriptPath: ROUTE_RESPONSE_SCRIPT,
+            useResponseRouter: true,
+          });
+        },
+        releaseRequestLock,
+      },
+    })
+      .catch((error) => {
+        console.error('[daemon] unexpected worker error', requestId, error?.message || error);
+      })
+      .finally(() => {
+        inFlightByRequest.delete(requestId);
+        inFlightByAgent.delete(agent);
       });
-      applied += 1;
-    } finally {
-      await releaseRequestLock(lockPath).catch(() => {});
-    }
+
+    inFlightByRequest.set(requestId, task);
+    inFlightByAgent.set(agent, task);
+    started += 1;
   }
-  return applied;
+
+  return started;
 }
 
-async function runSubmit(row) {
-  const lockPath = await claimRequestLock(row.requestId);
-  if (!lockPath) return false;
-
-  const result = await submitNativeRequest({
-    requestId: row.requestId,
-    lockPath,
-    deps: {
-      readRequest,
-      updateRequest,
-      submitRequest,
-      writeResponseVerified,
-      removeRequest,
-      notifyAgentIfAvailable: (notifyAgent, notifyRequestId, notifyPreview, notifyOptions = {}) => {
-        return notifyAgentIfAvailable(normalizeAgent(notifyAgent), notifyRequestId, notifyPreview, {
-          ...notifyOptions,
-          scriptPath: ROUTE_RESPONSE_SCRIPT,
-          useResponseRouter: true,
-        });
-      },
-      releaseRequestLock,
-    },
-  });
-
-  if (result.state === 'error') {
-    console.error('[daemon] submit failed', row.requestId, result.error);
-  }
-  return true;
-}
-
-async function runProbe(row) {
-  const lockPath = await claimRequestLock(row.requestId);
-  if (!lockPath) return false;
-
-  const result = await probeNativeRequest({
-    requestId: row.requestId,
-    lockPath,
-    deps: {
-      readRequest,
-      updateRequest,
-      probeRequest,
-      verifyResponseFiles,
-      writeResponseVerified,
-      removeRequest,
-      notifyAgentIfAvailable: (notifyAgent, notifyRequestId, notifyPreview, notifyOptions = {}) => {
-        return notifyAgentIfAvailable(normalizeAgent(notifyAgent), notifyRequestId, notifyPreview, {
-          ...notifyOptions,
-          scriptPath: ROUTE_RESPONSE_SCRIPT,
-          useResponseRouter: true,
-        });
-      },
-      releaseRequestLock,
-    },
-  });
-
-  if (result.state === 'complete') {
-    console.error('[daemon] complete', row.requestId);
-  } else if (result.state === 'error') {
-    console.error('[daemon] error', row.requestId, result.error);
-  }
-  return true;
-}
-
-async function maybeWork() {
-  const rows = await readAllRequests();
-  const activeRows = rows.filter(row => isActive(row.request));
-  await applyNotificationHints(activeRows);
-
-  const refreshedRows = await readAllRequests();
-  const activeCount = refreshedRows.filter(row => isActive(row.request)).length;
-
-  if (activeCount < MAX_ACTIVE_GENERATIONS) {
-    const pending = refreshedRows
-      .filter(row => isPending(row.request))
-      .sort((a, b) => parseTime(a.request.created_at) - parseTime(b.request.created_at));
-
-    if (pending.length) {
-      return await runSubmit(pending[0]);
-    }
-  }
-
-  const dueActive = refreshedRows
-    .filter(row => isActive(row.request) && isDue(row.request))
-    .sort((a, b) => {
-      const ah = a.request.notification_hint_at ? 0 : 1;
-      const bh = b.request.notification_hint_at ? 0 : 1;
-      if (ah !== bh) return ah - bh;
-      return parseTime(a.request.next_probe_at) - parseTime(b.request.next_probe_at);
-    });
-
-  if (dueActive.length) {
-    return await runProbe(dueActive[0]);
-  }
-
-  return false;
+async function waitForDrain() {
+  await Promise.allSettled([...inFlightByRequest.values()]);
 }
 
 try {
@@ -218,21 +114,21 @@ try {
     process.exit(0);
   }
 
-  const s = await nativeStatus();
-  if (!s.ax_trusted) {
-    console.error('[daemon] native Accessibility permission missing; refusing to control ChatGPT');
-    process.exit(1);
-  }
+  // Close stale "active" tabs from prior crashes if a browser is already open.
+  // Do not launch a new Chrome just to perform cleanup; that creates a bare
+  // about:blank tab before any request exists.
+  await cleanupEphemeralTabs({ includeErrors: false, includeUnmarked: false, launchIfNeeded: false });
 
-  lastNotificationRecordId = await currentNotificationRecordId();
-  console.error('[daemon] native ChatGPT mailbox worker running');
+  console.error('[daemon] async mailbox worker running');
 
   while (!stopping) {
-    const worked = await maybeWork();
-    if (!worked) {
+    const started = await maybeStartRequests();
+    if (!started) {
       await new Promise(resolve => setTimeout(resolve, POLL_MS));
     }
   }
+
+  await waitForDrain();
 } finally {
   if (pidClaimed) {
     await removeDaemonPid().catch(() => {});

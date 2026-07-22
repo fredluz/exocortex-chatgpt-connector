@@ -14,6 +14,10 @@ test('--fresh is a boolean flag', () => {
   assert.deepEqual(parseFlags(['--fresh']), { _: [], fresh: true });
 });
 
+test('--no-fresh is a boolean flag', () => {
+  assert.deepEqual(parseFlags(['--no-fresh']), { _: [], fresh: false });
+});
+
 test('--model consumes the next token', () => {
   assert.deepEqual(parseFlags(['--model', 'pro']), { _: [], model: 'pro' });
 });

@@ -14,7 +14,7 @@ const [cmd, ...rest] = process.argv.slice(2);
 
 function usage(code = 2) {
   console.error(
-    'usage: exocortex-chatgpt <launch|daemon|server|http|status|submit|fetch|query|image|last|new|model|thinking|stop|check> [args]',
+    'usage: exocortex-chatgpt <launch|daemon|server|server-http|http|status|submit|fetch|query|image|last|new|model|thinking|stop|check> [args]',
   );
   process.exit(code);
 }
@@ -27,7 +27,7 @@ function normalizeMode(flags) {
 }
 
 async function runController(fn) {
-  const c = await import('./native-controller.mjs');
+  const c = await import('./browser-controller.mjs');
   try {
     return await fn(c);
   } finally {
@@ -38,7 +38,7 @@ async function runController(fn) {
 try {
   switch (cmd) {
     case 'launch':
-      await runController(c => c.launch());
+      await import('./launcher.mjs');
       break;
 
     case 'daemon':
@@ -47,6 +47,10 @@ try {
 
     case 'server':
       await import('./mcp-server.mjs');
+      break;
+
+    case 'server-http':
+      await import('./mcp-server-http.mjs');
       break;
 
     case 'http':
@@ -76,12 +80,13 @@ try {
 
       const daemon = await ensureDaemonRunning();
       if (daemon.disabled) {
-        console.error(`warning: native daemon not started: ${daemon.error || 'disabled'}`);
+        console.error(`warning: browser daemon not started: ${daemon.error || 'disabled'}`);
       }
       const { request_id } = await submitRequest(prompt, {
         agent: flags.agent,
         model: flags.model,
         thinking: flags.thinking,
+        fresh: flags.fresh,
         mode: normalizeMode(flags),
         output_dir: flags.output_dir,
       });

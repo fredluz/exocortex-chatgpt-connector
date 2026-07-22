@@ -6,6 +6,7 @@ export function parseFlags(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--fresh') out.fresh = true;
+    else if (a === '--no-fresh') out.fresh = false;
     else if (a === '--image') out.image = true;
     else if (a === '--visible') out.visible = true;
     else if (a === '--model') out.model = argv[++i];

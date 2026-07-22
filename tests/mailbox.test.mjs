@@ -48,6 +48,7 @@ test('submit creates request file and pending status', async () => {
     assert.equal(req.prompt, 'hello world');
     assert.equal(req.state, 'pending');
     assert.equal(req.agent, 'foo');
+    assert.equal(req.fresh, true);
     assert.equal(req.response_path, responsePath(request_id, 'foo'));
 
     const s = await status(request_id);
@@ -59,6 +60,26 @@ test('submit creates request file and pending status', async () => {
     assert.equal(f.complete, false);
     assert.equal(f.error, undefined);
     assert.deepEqual(f.files, []);
+  });
+});
+
+test('submit can explicitly reuse the current conversation', async () => {
+  await withMailboxHome(async () => {
+    const { request_id } = await submit('hello world', { agent: 'foo', fresh: false });
+    const req = JSON.parse(await readFile(requestPath(request_id), 'utf8'));
+    assert.equal(req.fresh, false);
+  });
+});
+
+test('submit persists attachment paths on queued request', async () => {
+  await withMailboxHome(async () => {
+    const images = ['/tmp/reference.png'];
+    const files = ['/tmp/example.js'];
+    const { request_id } = await submit('hello with attachments', { agent: 'foo', images, files });
+
+    const req = JSON.parse(await readFile(requestPath(request_id), 'utf8'));
+    assert.deepEqual(req.images, images);
+    assert.deepEqual(req.files, files);
   });
 });
 
@@ -75,7 +96,7 @@ test('submit in image mode returns deterministic image_dir and request output_di
     assert.equal(req.response_path, responsePath(request_id, 'img'));
     assert.equal(req.output_dir, image_dir);
     assert.equal(req.image_dir, image_dir);
-    assert.equal(req.model, 'gpt-5');
+    assert.equal(req.model, 'pro');
   });
 });
 
@@ -88,16 +109,12 @@ test('submit without agent uses _default agent directory', async () => {
   });
 });
 
-test('submit in image mode rejects Pro model routing', async () => {
+test('submit in image mode accepts Pro model routing', async () => {
   await withMailboxHome(async () => {
-    await assert.rejects(
-      () => submit('Draw a red circle', { agent: 'img', mode: 'image', model: 'pro' }),
-      /mode=image does not support Pro models/,
-    );
-    await assert.rejects(
-      () => submit('Draw a red circle', { agent: 'img', mode: 'image', model: 'gpt-5-pro' }),
-      /mode=image does not support Pro models/,
-    );
+    const { request_id } = await submit('Draw a red circle', { agent: 'img', mode: 'image', model: 'gpt-5-pro' });
+    const req = JSON.parse(await readFile(requestPath(request_id), 'utf8'));
+    assert.equal(req.mode, 'image');
+    assert.equal(req.model, 'gpt-5-pro');
   });
 });
 

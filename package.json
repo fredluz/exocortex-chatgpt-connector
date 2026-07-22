@@ -1,14 +1,18 @@
 {
   "name": "exocortex-chatgpt-connector",
   "version": "0.1.1",
-  "description": "MACX Exocortex ChatGPT connector — native ChatGPT macOS automation for async text and image workflows.",
+  "description": "MACX Exocortex ChatGPT connector — browser automation for async text and image workflows.",
   "type": "module",
   "bin": {
     "exocortex-chatgpt": "./cli.mjs"
   },
   "files": [
     "*.mjs",
-    "README.md"
+    "selectors.json",
+    "README.md",
+    "docs/",
+    "native/",
+    "scripts/"
   ],
   "repository": {
     "type": "git",
@@ -27,12 +31,14 @@
     "exocortex",
     "macx",
     "multi-agent",
-    "macos",
-    "accessibility",
+    "playwright",
+    "patchright",
     "automation",
     "claude-code"
   ],
   "scripts": {
+    "build:native": "scripts/build-native-helper.sh",
+    "install:daemon-app": "scripts/install-daemon-app-wrapper.sh",
     "launch": "node cli.mjs launch",
     "daemon": "node cli.mjs daemon",
     "mcp": "node cli.mjs server",
@@ -42,6 +48,7 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0"
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "patchright": "^1.59.4"
   }
 }

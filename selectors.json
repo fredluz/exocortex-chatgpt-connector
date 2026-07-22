@@ -1,0 +1,87 @@
+{
+  "_meta": {
+    "source": "Discovered interactively from dom-samples/ on 2026-04-17 against chatgpt.com (German UI). Update by re-running launcher + capturing fresh HTML.",
+    "locale_notes": "aria-labels are in German ('Aufforderung senden', 'Streaming beenden', 'Voice starten'). Selectors below prefer language-independent data-testid/id."
+  },
+
+  "urls": {
+    "home": "https://chatgpt.com",
+    "login_probe_paths": ["/auth/login", "/login"]
+  },
+
+  "composer": {
+    "prompt_input": "#prompt-textarea",
+    "prompt_input_role": "[role=\"textbox\"][contenteditable=\"true\"]",
+    "send_button": "button[data-testid=\"send-button\"], #composer-submit-button",
+    "stop_button": "button[data-testid=\"stop-button\"]",
+    "submit_button_any": "#composer-submit-button"
+  },
+
+  "attachments": {
+    "composer_file_input": "form:has(#prompt-textarea) input[type=\"file\"], [data-testid=\"composer\"] input[type=\"file\"]",
+    "file_input": "input[type=\"file\"]",
+    "attach_button": "button[data-testid=\"plus-button\"], button[aria-label*=\"Attach\"], button[aria-label*=\"Upload\"], button[aria-label*=\"Anhang\"], button[aria-label*=\"Datei\"]",
+    "upload_progress": "[role=\"progressbar\"], [aria-busy=\"true\"], [data-testid*=\"upload-progress\"], [data-testid*=\"attachment-upload\"]"
+  },
+
+  "conversation": {
+    "turn_any": "[data-testid^=\"conversation-turn-\"]",
+    "turn_assistant_section": "section[data-turn=\"assistant\"]",
+    "turn_user_section": "section[data-turn=\"user\"]",
+    "message_assistant": "[data-message-author-role=\"assistant\"]",
+    "message_user": "[data-message-author-role=\"user\"]",
+    "message_markdown_body": "[data-message-author-role=\"assistant\"] .markdown"
+  },
+
+  "signals": {
+    "generating": "button[data-testid=\"stop-button\"]",
+    "turn_finished_marker": "[data-testid=\"copy-turn-action-button\"]",
+    "login_required_marker": "a[href*=\"/auth/login\"], button[data-testid=\"login-button\"]"
+  },
+
+  "nav": {
+    "new_chat_button": "[data-testid=\"create-new-chat-button\"]"
+  },
+
+  "sidebar": {
+    "container": "nav",
+    "toggle_button": "button[data-testid=\"open-sidebar-button\"], button[aria-label*=\"sidebar\" i], button[aria-label*=\"Seitenleiste\" i], button[aria-label*=\"Menü\" i], button[aria-label*=\"Menu\" i]",
+    "conversation_links": "nav a[href^=\"/c/\"], nav a[href*=\"chatgpt.com/c/\"], nav [data-testid*=\"conversation\"] a[href^=\"/c/\"], nav [data-testid*=\"conversation\"]",
+    "conversation_link_current": "nav a[href^=\"/c/\"][aria-current=\"page\"], nav a[href^=\"/c/\"][data-active=\"true\"], nav [data-testid*=\"conversation\"][aria-current=\"page\"]",
+    "conversation_menu_button": "button[data-testid*=\"conversation-options\"], button[data-testid*=\"history-item\"], button[aria-label*=\"conversation options\" i], button[aria-label*=\"Chat-Optionen\" i], button[aria-label*=\"Optionen\" i], button[aria-label*=\"More\" i], button[aria-label*=\"Mehr\" i]",
+    "rename_menu_items": "[role=\"menuitem\"], [role=\"option\"], button, div[role=\"button\"]",
+    "rename_input": "input[type=\"text\"], textarea, [role=\"textbox\"][contenteditable=\"true\"]",
+    "rename_text": ["Rename", "Umbenennen"]
+  },
+
+  "model": {
+    "dropdown_button": "[data-testid=\"model-switcher-dropdown-button\"]",
+    "_menuitem_role": "[role=\"menuitemradio\"], [role=\"menuitem\"], [role=\"option\"]",
+    "configure_modal_trigger": "[data-testid=\"model-configure-modal\"]",
+    "submenu_trigger_text": ["Mehr Modelle", "More models", "Legacy models", "Weitere Modelle"],
+    "name_map": {
+      "instant":  "[data-testid=\"model-switcher-gpt-5-3\"]",
+      "thinking": "[data-testid=\"model-switcher-gpt-5-4-thinking\"]",
+      "pro":      "[data-testid=\"model-switcher-gpt-5-4-pro\"]",
+      "gpt-5":    "[data-testid=\"model-switcher-gpt-5-3\"]",
+      "gpt-5-thinking": "[data-testid=\"model-switcher-gpt-5-4-thinking\"]",
+      "gpt-5-pro":      "[data-testid=\"model-switcher-gpt-5-4-pro\"]"
+    }
+  },
+
+  "thinking": {
+    "pill_trigger": "button.__composer-pill[data-tone=\"accent\"]",
+    "menuitem_role": "[role=\"menuitemradio\"]",
+    "current_marker": "[role=\"menuitemradio\"][aria-checked=\"true\"]",
+    "icon_href": {
+      "standard": "#fec800",
+      "longer":   "#143e56"
+    },
+    "name_map_text": {
+      "standard": ["Standard"],
+      "longer":   ["Länger", "Longer", "Extended", "Mais longo"],
+      "extended": ["Länger", "Longer", "Extended", "Mais longo"]
+    },
+    "_note": "Pill only exists when a Pro/Thinking-capable model is active. Matches by text (locale list) first, then by SVG sprite icon href as a locale-independent fallback."
+  }
+}

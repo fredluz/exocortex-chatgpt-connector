@@ -6,13 +6,17 @@
 
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, readdir, stat } from 'node:fs/promises';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
 const BUNDLE_ID = 'com.openai.chat';
 const APP_NAME = 'ChatGPT';
-const LABEL_SEPARATOR = '\u001f';
+const LABEL_SEPARATOR = '|||';
+const AX_HELPER = process.env.CHATGPT_NATIVE_AX_HELPER
+  || join(__dirname, 'build', 'native', 'chatgpt-ax-helper');
 const DEFAULT_AX_TIMEOUT_MS = Number(process.env.CHATGPT_NATIVE_AX_TIMEOUT_MS || 30_000);
 const DEFAULT_SWITCH_DELAY_MS = Number(process.env.CHATGPT_NATIVE_SWITCH_DELAY_MS || 1_500);
 const DEFAULT_RESPONSE_TIMEOUT_MS = Number(process.env.CHATGPT_NATIVE_RESPONSE_TIMEOUT_MS || 45 * 60_000);
@@ -77,6 +81,21 @@ function modelLabels(model) {
   return [model];
 }
 
+function selectedConversationMatchesModel(conversation, model) {
+  const slug = String(conversation?.modelSlug ?? '').toLowerCase();
+  const normalized = normalizeModel(model);
+  if (!slug || !normalized) return false;
+  if (
+    normalized === 'pro'
+    || normalized === 'gpt-5-pro'
+    || normalized === 'gpt5-pro'
+    || normalized.includes('pro')
+  ) {
+    return slug.includes('pro');
+  }
+  return slug.includes(normalized.replace(/[^a-z0-9]+/g, '-'));
+}
+
 function labelsArg(labels) {
   return labels.filter(Boolean).join(LABEL_SEPARATOR);
 }
@@ -86,14 +105,36 @@ function requestSentinel(requestId) {
 }
 
 function promptWithSentinel(request) {
-  const sentinel = requestSentinel(request.request_id);
-  return [
-    `Request ID: ${request.request_id}`,
-    `Tracking token: ${sentinel}`,
-    'Keep the tracking token out of your final answer unless explicitly asked.',
-    '',
-    request.prompt,
-  ].join('\n');
+  return String(request.prompt ?? '');
+}
+
+function conversationIdValue(value) {
+  if (!value) return null;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object') return value._0 ?? value.id ?? null;
+  return null;
+}
+
+function conversationIds(conversation = null) {
+  const id = conversation?.conversationID ?? {};
+  return {
+    remote: conversationIdValue(id.remote),
+    local: conversationIdValue(id.local) ?? conversation?.localID ?? null,
+  };
+}
+
+function conversationUrl(conversation = null) {
+  const { remote } = conversationIds(conversation);
+  return remote ? `https://chatgpt.com/c/${remote}` : null;
+}
+
+function sameConversation(a = null, b = null) {
+  const left = conversationIds(a);
+  const right = conversationIds(b);
+  return Boolean(
+    (left.remote && right.remote && left.remote === right.remote)
+    || (left.local && right.local && left.local === right.local),
+  );
 }
 
 function promiseExecFile(file, args, opts = {}) {
@@ -118,24 +159,52 @@ function promiseExecFile(file, args, opts = {}) {
 
 async function runOsa(actionScript, args = [], opts = {}) {
   const fullScript = `${AX_SCRIPT_LIBRARY}\n${actionScript}`;
-  const osaArgs = ['-e', fullScript, ...args.map(value => String(value ?? ''))];
-  const { stdout } = await promiseExecFile('/usr/bin/osascript', osaArgs, {
-    timeoutMs: opts.timeoutMs ?? DEFAULT_AX_TIMEOUT_MS,
-    maxBuffer: opts.maxBuffer ?? 16 * 1024 * 1024,
-  });
-  return stdout.trim();
+  const scriptDir = await mkdtemp(join(tmpdir(), 'chatgpt-ax-'));
+  const scriptPath = join(scriptDir, 'run.scpt');
+  const scriptArgs = args.map(value => String(value ?? ''));
+
+  await writeFile(scriptPath, fullScript, 'utf8');
+
+  try {
+    const osaArgs = [scriptPath, '--', ...scriptArgs];
+    const { stdout } = await promiseExecFile('/usr/bin/osascript', osaArgs, {
+      timeoutMs: opts.timeoutMs ?? DEFAULT_AX_TIMEOUT_MS,
+      maxBuffer: opts.maxBuffer ?? 16 * 1024 * 1024,
+    });
+    return stdout.trim();
+  } finally {
+    await rm(scriptDir, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 async function runOpen(args) {
   await promiseExecFile('/usr/bin/open', args, { timeoutMs: 10_000 });
 }
 
+async function runHelper(command, args = [], opts = {}) {
+  if (!existsSync(AX_HELPER)) return null;
+  try {
+    const { stdout } = await promiseExecFile(AX_HELPER, [command, ...args], {
+      timeoutMs: opts.timeoutMs ?? DEFAULT_AX_TIMEOUT_MS,
+      maxBuffer: opts.maxBuffer ?? 32 * 1024 * 1024,
+    });
+    return stdout.trim();
+  } catch (error) {
+    if (process.env.CHATGPT_NATIVE_HELPER_STRICT === '1') throw error;
+    return null;
+  }
+}
+
 async function activateApp() {
-  await runOpen(['-b', BUNDLE_ID]);
+  const out = await runHelper('activate', [BUNDLE_ID], { timeoutMs: 5_000 });
+  if (out == null) await runOpen(['-b', BUNDLE_ID]);
   await delay(300);
 }
 
 async function frontmostBundleId() {
+  const helperOut = await runHelper('frontmost', [], { timeoutMs: 5_000 });
+  if (helperOut) return helperOut;
+
   try {
     const out = await runOsa(`
 on run argv
@@ -190,6 +259,9 @@ async function readLastSelectedConversation() {
 }
 
 async function axTrusted() {
+  const helperOut = await runHelper('trusted', [], { timeoutMs: 5_000 });
+  if (helperOut === '1') return true;
+
   try {
     const { stdout } = await promiseExecFile('/usr/bin/osascript', [
       '-e',
@@ -233,6 +305,16 @@ async function maybeSetModel(model) {
   const labels = modelLabels(model);
   if (!labels.length) return { model: null, changed: false };
 
+  const selectedConversation = await readLastSelectedConversation();
+  if (selectedConversationMatchesModel(selectedConversation, model)) {
+    return {
+      model,
+      changed: false,
+      detail: 'already_selected',
+      conversation_model: selectedConversation.modelSlug ?? null,
+    };
+  }
+
   const out = await runOsa(`
 on run argv
   my ensureChatGPT()
@@ -263,12 +345,41 @@ end run
   return { model, changed: out === 'model_selected', detail: out };
 }
 
+async function submitPromptWithHelper(request, fullPrompt) {
+  if (!existsSync(AX_HELPER)) return null;
+
+  if (request.fresh !== false) {
+    const newChatOut = await runHelper('click-button', [BUNDLE_ID, labelsArg(LABELS.newChat)], {
+      timeoutMs: 8_000,
+    });
+    if (newChatOut !== '1') return null;
+    await delay(700);
+  }
+
+  const setOut = await runHelper('set-textarea', [BUNDLE_ID, fullPrompt], {
+    timeoutMs: 12_000,
+    maxBuffer: 1024 * 1024,
+  });
+  if (setOut !== '1') return null;
+  await delay(250);
+
+  const sendOut = await runHelper('click-button', [BUNDLE_ID, labelsArg(LABELS.send)], {
+    timeoutMs: 8_000,
+  });
+  if (sendOut !== '1') {
+    await runHelper('set-textarea', [BUNDLE_ID, ''], { timeoutMs: 5_000 });
+    return null;
+  }
+  await delay(700);
+  return 'submitted';
+}
+
 async function submitPrompt(request) {
   const fullPrompt = promptWithSentinel(request);
   const model = request.model ?? null;
   const modelResult = model ? await maybeSetModel(model) : { model: null, changed: false };
 
-  const out = await runOsa(`
+  const out = await submitPromptWithHelper(request, fullPrompt) ?? await runOsa(`
 on run argv
   set promptText to item 1 of argv
   set freshMode to item 2 of argv
@@ -291,20 +402,13 @@ on run argv
         end if
       end if
 
-      set inputArea to my firstTextArea(window 1)
-      if inputArea is missing value then error "composer_text_area_missing"
-      try
-        set focused of inputArea to true
-      end try
-      set value of inputArea to promptText
-      delay 0.2
-
-      set sendButton to my findButton(window 1, sendLabels)
-      if sendButton is not missing value then
-        click sendButton
-      else
-        key code 36
-      end if
+      -- Use clipboard paste instead of AX text area manipulation
+      set the clipboard to promptText
+      delay 0.3
+      keystroke "v" using {command down}
+      delay 0.5
+      -- Press Enter to send
+      key code 36
       delay 0.7
       return "submitted"
     end tell
@@ -322,6 +426,7 @@ end run
     submitted: out === 'submitted',
     model_result: modelResult,
     conversation: selectedConversation,
+    conversation_url: conversationUrl(selectedConversation),
     sentinel: requestSentinel(request.request_id),
   };
 }
@@ -338,30 +443,22 @@ async function switchToRequestConversation(request) {
     return { method: 'url', target_url: targetUrl };
   }
 
-  const searchText = request.sentinel || requestSentinel(request.request_id);
-  const out = await runOsa(`
-on run argv
-  set searchText to item 1 of argv
-  my ensureChatGPT()
-  tell application "System Events"
-    tell process "${APP_NAME}"
-      key code 40 using {command down}
-      delay 0.4
-      keystroke searchText
-      delay 0.7
-      key code 36
-      delay 1.0
-      return "searched"
-    end tell
-  end tell
-end run
-`, [searchText], { timeoutMs: 12_000 }).catch(error => {
-    return `search_failed:${error.message || error}`;
-  });
-  return { method: 'search', detail: out };
+  const selectedConversation = await readLastSelectedConversation();
+  if (sameConversation(selectedConversation, request.conversation)) {
+    return { method: 'already_selected' };
+  }
+
+  return {
+    method: 'unavailable',
+    detail: 'no_conversation_url; refusing visible marker search',
+  };
 }
 
 async function hasStopButton() {
+  const helperOut = await runHelper('has-button', [BUNDLE_ID, labelsArg(LABELS.stop)], { timeoutMs: 10_000 });
+  if (helperOut === '1') return true;
+  if (helperOut === '0') return false;
+
   const out = await runOsa(`
 on run argv
   set stopLabels to my splitLabels(item 1 of argv)
@@ -379,6 +476,12 @@ end run
 }
 
 async function readVisibleText() {
+  const helperOut = await runHelper('collect-texts', [BUNDLE_ID], {
+    timeoutMs: 45_000,
+    maxBuffer: 32 * 1024 * 1024,
+  });
+  if (helperOut) return helperOut;
+
   return runOsa(`
 on run argv
   my ensureChatGPT()
@@ -398,9 +501,6 @@ function extractAssistantText(rawText, request) {
 
   for (const needle of [
     prompt,
-    `Request ID: ${request.request_id}`,
-    `Tracking token: ${sentinel}`,
-    'Keep the tracking token out of your final answer unless explicitly asked.',
     sentinel,
     request.request_id,
   ]) {
@@ -454,6 +554,9 @@ async function collectDownloadedImagesSince(startedAt, outputDir) {
 }
 
 async function clickDownloadButtons() {
+  const helperOut = await runHelper('click-buttons', [BUNDLE_ID, labelsArg(LABELS.download)], { timeoutMs: 15_000 });
+  if (helperOut != null) return helperOut;
+
   await runOsa(`
 on run argv
   set downloadLabels to my splitLabels(item 1 of argv)
@@ -485,7 +588,7 @@ export async function submitRequest(request) {
     return {
       ...started,
       conversation_title: `ECX ${request.request_id} ${briefPrompt(request.prompt)}`.trim(),
-      conversation_url: null,
+      conversation_url: started.conversation_url ?? null,
     };
   });
 }
@@ -493,6 +596,13 @@ export async function submitRequest(request) {
 export async function probeRequest(request) {
   return withChatGPTUi(async () => {
     const switchResult = await switchToRequestConversation(request);
+    if (switchResult.method === 'unavailable') {
+      return {
+        complete: false,
+        generating: false,
+        switch_result: switchResult,
+      };
+    }
     const generating = await hasStopButton();
     if (generating) {
       return {
@@ -558,7 +668,12 @@ export async function query(prompt, opts = {}) {
 }
 
 export async function generateImage(prompt, opts = {}) {
-  return query(prompt, { ...opts, mode: 'image', fresh: opts.fresh ?? true });
+  return query(prompt, {
+    ...opts,
+    model: opts.model ?? 'pro',
+    mode: 'image',
+    fresh: opts.fresh ?? true,
+  });
 }
 
 export async function readLast() {
@@ -648,11 +763,13 @@ function extractTargetUrl(strings) {
 
 function notificationMatchesRequest(strings, request) {
   const haystack = strings.join('\n');
+  const { remote, local } = conversationIds(request.conversation);
   const needles = [
-    request.request_id,
-    request.sentinel,
-    requestSentinel(request.request_id),
     request.conversation_title,
+    request.conversation_url,
+    request.notification_target_url,
+    remote,
+    local,
   ].filter(Boolean);
   return needles.some(needle => haystack.includes(needle));
 }
@@ -710,8 +827,20 @@ ORDER BY r.rec_id ASC;
 
     const strings = printableStrings(Buffer.from(hex, 'hex'));
     const targetUrl = extractTargetUrl(strings);
+    let matched = false;
     for (const request of requestsById.values()) {
       if (!notificationMatchesRequest(strings, request)) continue;
+      matched = true;
+      hints.push({
+        request_id: request.request_id,
+        record_id: recId,
+        delivered_date: Number(deliveredRaw) || null,
+        target_url: targetUrl,
+        title_or_body: strings.slice(-8).join(' '),
+      });
+    }
+    if (!matched && requestsById.size === 1) {
+      const [request] = requestsById.values();
       hints.push({
         request_id: request.request_id,
         record_id: recId,
@@ -754,26 +883,28 @@ end pressEscape
 
 on elementTextCandidates(itemRef)
   set xs to {}
-  try
-    set d to description of itemRef as text
-    if d is not "" then set end of xs to d
-  end try
-  try
-    set t to title of itemRef as text
-    if t is not "" then set end of xs to t
-  end try
-  try
-    set n to name of itemRef as text
-    if n is not "" then set end of xs to n
-  end try
-  try
-    set v to value of itemRef as text
-    if v is not "" then set end of xs to v
-  end try
-  try
-    set h to help of itemRef as text
-    if h is not "" then set end of xs to h
-  end try
+  tell application "System Events"
+    try
+      set d to description of itemRef as text
+      if d is not "" then set end of xs to d
+    end try
+    try
+      set t to title of itemRef as text
+      if t is not "" then set end of xs to t
+    end try
+    try
+      set n to name of itemRef as text
+      if n is not "" then set end of xs to n
+    end try
+    try
+      set v to value of itemRef as text
+      if v is not "" then set end of xs to v
+    end try
+    try
+      set h to help of itemRef as text
+      if h is not "" then set end of xs to h
+    end try
+  end tell
   return xs
 end elementTextCandidates
 
@@ -793,7 +924,7 @@ on matchesAnyText(itemRef, labels)
 end matchesAnyText
 
 on findButton(rootRef, labels)
-  set elems to entire contents of rootRef
+  tell application "System Events" to tell process "${APP_NAME}" to set elems to entire contents of rootRef
   repeat with itemRef in elems
     try
       set roleText to role of itemRef as text
@@ -806,7 +937,7 @@ on findButton(rootRef, labels)
 end findButton
 
 on firstTextArea(rootRef)
-  set elems to entire contents of rootRef
+  tell application "System Events" to tell process "${APP_NAME}" to set elems to entire contents of rootRef
   repeat with itemRef in elems
     try
       set roleText to role of itemRef as text
@@ -820,7 +951,7 @@ on collectTexts(rootRef)
   set oldDelimiters to AppleScript's text item delimiters
   set AppleScript's text item delimiters to linefeed & linefeed
   set texts to {}
-  set elems to entire contents of rootRef
+  tell application "System Events" to tell process "${APP_NAME}" to set elems to entire contents of rootRef
   repeat with itemRef in elems
     try
       set roleText to role of itemRef as text

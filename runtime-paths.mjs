@@ -1,5 +1,8 @@
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { existsSync } from 'node:fs';
+
+const LEGACY_HOME = join(homedir(), '.chatgpt-mcp');
 
 function defaultHome() {
   return join(homedir(), '.exocortex', 'chatgpt');
@@ -13,6 +16,20 @@ export function getHome() {
 
 export function getAgentName() {
   return String(process.env.MACX_AGENT || '').trim() || null;
+}
+
+export function getProfileDir() {
+  const current = join(getHome(), 'profile');
+  const legacy = join(LEGACY_HOME, 'profile');
+  if (!existsSync(current) && existsSync(legacy)) return legacy;
+  return current;
+}
+
+export function getCDPFilePath() {
+  const current = join(getHome(), 'cdp');
+  const legacy = join(LEGACY_HOME, 'cdp');
+  if (!existsSync(current) && existsSync(legacy)) return legacy;
+  return current;
 }
 
 export function getImagesDir() {

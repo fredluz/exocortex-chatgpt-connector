@@ -201,12 +201,7 @@ export async function submit(prompt, opts = {}) {
   const createdAt = nowIso();
   const mode = normalizeMode(opts.mode);
   const model = mode === 'image'
-    ? (() => {
-        if (opts.model && isProModel(opts.model)) {
-          throw new Error('mode=image does not support Pro models; use --model gpt-5 or omit --model');
-        }
-        return opts.model ?? 'gpt-5';
-      })()
+    ? (opts.model ?? 'pro')
     : (opts.model ?? null);
   const response_path = responsePath(requestId, agent);
   const image_dir = mode === 'image'
@@ -219,8 +214,10 @@ export async function submit(prompt, opts = {}) {
     agent,
     model,
     thinking: opts.thinking ?? null,
-    fresh: Boolean(opts.fresh),
+    fresh: opts.fresh !== false,
     mode,
+    images: normalizeFiles(opts.images),
+    files: normalizeFiles(opts.files),
     response_path,
     output_dir: mode === 'image'
       ? image_dir
@@ -570,26 +567,6 @@ export async function ensureDaemonRunning() {
   const existingPid = await readDaemonPid();
   if (existingPid && isPidAlive(existingPid)) {
     return { started: false, pid: existingPid, disabled: false };
-  }
-
-  try {
-    const native = await import('./native-controller.mjs');
-    const s = await native.status();
-    if (!s.ax_trusted) {
-      return {
-        started: false,
-        pid: null,
-        disabled: true,
-        error: 'native_accessibility_permission_missing',
-      };
-    }
-  } catch (error) {
-    return {
-      started: false,
-      pid: null,
-      disabled: true,
-      error: String(error?.message || error),
-    };
   }
 
   const child = spawn(process.execPath, [CLI_PATH, 'daemon'], {

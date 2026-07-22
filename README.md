@@ -1,8 +1,8 @@
 # Exocortex ChatGPT Connector
 
-Native macOS ChatGPT connector for MACX Exocortex workflows.
+Browser-backed ChatGPT connector for MACX Exocortex workflows.
 
-This version controls the ChatGPT macOS desktop app through Accessibility UI scripting. The old Chrome/Patchright backend is deprecated and has been removed from the executable path.
+This version uses the ChatGPT web app through a persistent Chrome/Patchright browser session. The native macOS app controller remains in the repository as experimental code, but it is no longer the default runtime path.
 
 ## Interface
 
@@ -23,37 +23,44 @@ The MCP server still exists as an adapter for clients that want it:
 exocortex-chatgpt server
 ```
 
+## Documentation
+
+Detailed maintenance and operations docs live in:
+
+- [Architecture](docs/ARCHITECTURE.md)
+- [Operations](docs/OPERATIONS.md)
+- [E2E Verification](docs/E2E_VERIFICATION.md)
+
 ## Safety Model
 
-The daemon uses one serial UI queue. ChatGPT can generate in multiple background conversations, but only one operation can touch the visible app at a time.
+The daemon creates one browser tab per async request, with one in-flight request per agent. Successful tabs are closed after the response is written to disk; error tabs are left open for inspection.
 
-Detailed restart/handoff notes live in:
-
-```text
-research/native-mcp-handoff.md
-```
-
-Read that file before running native end-to-end tests or starting the daemon from a new tmux session.
-
-Native UI operations now follow two rules:
-
-- If Accessibility permission is missing, the daemon refuses to activate or control ChatGPT.
-- When a UI operation does activate ChatGPT, it restores the previously frontmost app in a `finally` path.
-
-This means `submit` can safely queue a request even before Accessibility is granted, but the daemon will not run that request until permission is available.
+Browser state is stored under the shared Exocortex runtime home, so CLI, MCP, and daemon processes attach to the same authenticated session.
 
 ## Setup
 
 Requirements:
 
 - macOS
-- ChatGPT desktop app installed and signed in
+- Google Chrome installed
 - Node.js 20+
-- Accessibility permission granted to the terminal/process running the daemon
+- ChatGPT signed in once in the connector browser profile
 
-Grant Accessibility permission in:
+Install the CLI link:
 
-System Settings -> Privacy & Security -> Accessibility
+```bash
+cd /Users/fredluz/Code/exocortex-chatgpt-connector
+npm link
+```
+
+First run visible mode and sign in:
+
+```bash
+exocortex-chatgpt launch --visible
+```
+
+Leave that browser owner running, or let `submit` auto-start an off-screen owner
+when no owner is already available.
 
 Then verify:
 
@@ -61,11 +68,8 @@ Then verify:
 exocortex-chatgpt check
 ```
 
-Expected checks:
-
-- `native.ax_trusted`
-- `native.chatgpt_process`
-- `native.notifications_db`
+Expected checks include the browser DOM selectors for the ChatGPT composer,
+conversation, model switcher, and thinking controls.
 
 ## Async Flow
 
@@ -74,6 +78,10 @@ request_id=$(exocortex-chatgpt submit --agent "$MACX_AGENT" "Prompt text")
 exocortex-chatgpt status "$request_id"
 exocortex-chatgpt fetch "$request_id"
 ```
+
+Queued submissions start a fresh ChatGPT conversation by default. Pass
+`--no-fresh` only when a request should intentionally continue the currently
+selected conversation.
 
 `submit` writes a request file under:
 
@@ -93,11 +101,25 @@ Image outputs are written under:
 ~/.exocortex/chatgpt/agents/<agent>/images/
 ```
 
-## Notifications
+Image requests default to Pro routing. Callers can still pass another visible
+model name when they deliberately want to override that default.
 
-The native daemon watches ChatGPT's registered macOS notification records as a completion hint. Request IDs are embedded in prompts so notification text or payloads can be matched when ChatGPT surfaces them.
+## Browser Runtime
 
-Notifications are not the source of truth. They only move a request to the front of the probe queue. Final completion still requires a serial UI probe and response extraction.
+The browser controller uses Patchright with a persistent profile at:
+
+```text
+~/.exocortex/chatgpt/profile/
+```
+
+It writes the browser CDP endpoint to:
+
+```text
+~/.exocortex/chatgpt/cdp
+```
+
+Prompts are sent as-is; the connector does not inject request IDs or tracking
+tokens into ChatGPT messages.
 
 ## MCP Tools
 
@@ -109,7 +131,7 @@ The MCP adapter exposes:
 - `status`
 - `fetch`
 
-For agents, prefer `submit_pro` / `submit_image` plus direct file reads from the returned paths.
+For agents, prefer `submit_pro` / `submit_image` plus direct file reads from the returned paths. `submit_image` uses Pro by default.
 
 ## State
 
